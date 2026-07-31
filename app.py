@@ -1,5 +1,6 @@
 import os
-from flask import Flask, jsonify
+import concurrent.futures
+from flask import Flask
 import requests
 import smtplib
 import ssl
@@ -11,60 +12,70 @@ UYGULAMA_SIFRESI = "mcpiytlnzvexesba"
 
 app = Flask(__name__)
 
+def fetch_single_candle(item):
+    try:
+        sym = item['symbol']
+        klines_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=4h&limit=25"
+        k_res = requests.get(klines_url, timeout=3)
+        if k_res.status_code != 200:
+            return None
+        
+        klines = k_res.json()
+        if not klines or len(klines) < 2:
+            return None
+
+        directions = []
+        for k in klines:
+            open_p = float(k[1])
+            close_p = float(k[4])
+            if close_p > open_p:
+                directions.append(1)
+            elif close_p < open_p:
+                directions.append(-1)
+            else:
+                directions.append(0)
+
+        last_dir = directions[-1]
+        if last_dir == 0:
+            return None
+
+        streak = 0
+        for d in reversed(directions):
+            if d == last_dir:
+                streak += 1
+            else:
+                break
+
+        last_price = float(klines[-1][4])
+        return {
+            "symbol": sym,
+            "price": last_price,
+            "streak": streak if last_dir == 1 else -streak
+        }
+    except:
+        return None
+
 def fetch_candles_and_count():
     try:
         url = "https://api.binance.com/api/v3/ticker/24hr"
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=5)
         if res.status_code != 200:
             return []
 
         data = res.json()
         usdt_pairs = [d for d in data if d['symbol'].endswith('USDT') and not d['symbol'].endswith('UPUSDT') and not d['symbol'].endswith('DOWNUSDT')]
         
-        top_gainers = sorted(usdt_pairs, key=lambda x: float(x['priceChangePercent']), reverse=True)[:15]
-        top_losers = sorted(usdt_pairs, key=lambda x: float(x['priceChangePercent']))[:15]
+        top_gainers = sorted(usdt_pairs, key=lambda x: float(x['priceChangePercent']), reverse=True)[:10]
+        top_losers = sorted(usdt_pairs, key=lambda x: float(x['priceChangePercent']))[:10]
         candidates = top_gainers + top_losers
         
         results = []
-        for item in candidates:
-            sym = item['symbol']
-            klines_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=4h&limit=25"
-            k_res = requests.get(klines_url, timeout=5)
-            if k_res.status_code != 200:
-                continue
-            
-            klines = k_res.json()
-            if not klines or len(klines) < 2:
-                continue
-
-            directions = []
-            for k in klines:
-                open_p = float(k[1])
-                close_p = float(k[4])
-                if close_p > open_p:
-                    directions.append(1)
-                elif close_p < open_p:
-                    directions.append(-1)
-                else:
-                    directions.append(0)
-
-            last_dir = directions[-1]
-            if last_dir == 0:
-                continue
-
-            streak = 0
-            for d in reversed(directions):
-                if d == last_dir:
-                    streak += 1
-                else:
-                    break
-
-            last_price = float(klines[-1][4])
-            results.append({
-                "symbol": sym,
-                "price": last_price,
-                "streak": streak if last_dir == 1 else -streak
-            })
+        # İstekleri sırayla atmak yerine eşzamanlı (hızlı) yapıyoruz
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures_results = executor.map(fetch_single_candle, candidates)
+            for r in futures_results:
+                if r:
+                    results.append(r)
 
         return results
     except Exception as e:
