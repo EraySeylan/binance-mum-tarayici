@@ -1,6 +1,4 @@
 import os
-import concurrent.futures
-from flask import Flask
 import requests
 import smtplib
 import ssl
@@ -10,87 +8,82 @@ from email.mime.multipart import MIMEMultipart
 MAIL_ADRESI = "cebrailseylan27@gmail.com"
 UYGULAMA_SIFRESI = "mcpiytlnzvexesba"
 
+app = Flask(__name__) if 'Flask' in globals() else None
+from flask import Flask
 app = Flask(__name__)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-BASE_URLS = [
-    "https://data-api.binance.vision",
-    "https://api.binance.com",
-    "https://api1.binance.com",
-    "https://api2.binance.com",
-    "https://api3.binance.com"
-]
-
-def make_request(path, params=None):
-    for base in BASE_URLS:
-        try:
-            url = f"{base}{path}"
-            res = requests.get(url, params=params, headers=HEADERS, timeout=3)
-            if res.status_code == 200:
-                return res.json()
-        except:
-            continue
-    return None
-
-def fetch_single_candle(item):
+def analyze_candles():
     try:
-        sym = item['symbol']
-        klines = make_request("/api/v3/klines", {"symbol": sym, "interval": "4h", "limit": 20})
-        if not klines or len(klines) < 2:
-            return None
-
-        directions = []
-        for k in klines:
-            open_p = float(k[1])
-            close_p = float(k[4])
-            if close_p > open_p:
-                directions.append(1)
-            elif close_p < open_p:
-                directions.append(-1)
-            else:
-                directions.append(0)
-
-        last_dir = directions[-1]
-        if last_dir == 0:
-            return None
-
-        streak = 0
-        for d in reversed(directions):
-            if d == last_dir:
-                streak += 1
-            else:
-                break
-
-        last_price = float(klines[-1][4])
-        return {
-            "symbol": sym,
-            "price": last_price,
-            "streak": streak if last_dir == 1 else -streak
-        }
-    except:
-        return None
-
-def fetch_candles_and_count():
-    try:
-        data = make_request("/api/v3/ticker/24hr")
-        if not data:
+        # Binance Futures 24 saatlik verileri alıyoruz
+        url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        
+        # Eğer fapi engellendiyse Spot alternatifine geç
+        if res.status_code != 200:
+            url = "https://api.binance.com/api/v3/ticker/24hr"
+            res = requests.get(url, headers=HEADERS, timeout=10)
+            
+        if res.status_code != 200:
             return []
 
-        usdt_pairs = [d for d in data if d.get('symbol', '').endswith('USDT') and not d['symbol'].endswith('UPUSDT') and not d['symbol'].endswith('DOWNUSDT')]
+        data = res.json()
+        usdt_pairs = [d for d in data if d.get('symbol', '').endswith('USDT') and not d['symbol'].startswith('1000')]
         
-        top_gainers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)), reverse=True)[:8]
-        top_losers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)))[:8]
+        # En çok hareket eden yükselen ve düşenleri seçiyoruz
+        top_gainers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)), reverse=True)[:10]
+        top_losers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)))[:10]
         candidates = top_gainers + top_losers
         
         results = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures_results = executor.map(fetch_single_candle, candidates)
-            for r in futures_results:
-                if r:
-                    results.append(r)
+        is_futures = "fapi" in url
+
+        for item in candidates:
+            sym = item['symbol']
+            if is_futures:
+                k_url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym}&interval=4h&limit=25"
+            else:
+                k_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=4h&limit=25"
+                
+            k_res = requests.get(k_url, headers=HEADERS, timeout=5)
+            if k_res.status_code != 200:
+                continue
+                
+            klines = k_res.json()
+            if not klines or len(klines) < 2:
+                continue
+
+            directions = []
+            for k in klines:
+                open_p = float(k[1])
+                close_p = float(k[4])
+                if close_p > open_p:
+                    directions.append(1)
+                elif close_p < open_p:
+                    directions.append(-1)
+                else:
+                    directions.append(0)
+
+            last_dir = directions[-1]
+            if last_dir == 0:
+                continue
+
+            streak = 0
+            for d in reversed(directions):
+                if d == last_dir:
+                    streak += 1
+                else:
+                    break
+
+            last_price = float(klines[-1][4])
+            results.append({
+                "symbol": sym,
+                "price": last_price,
+                "streak": streak if last_dir == 1 else -streak
+            })
 
         return results
     except Exception as e:
@@ -101,9 +94,9 @@ def fetch_candles_and_count():
 @app.route('/mail-tetikle')
 def send_email_report():
     try:
-        results = fetch_candles_and_count()
+        results = analyze_candles()
         if not results:
-            return "Tarama tamamlandi ancak uygun veri bulunamadi.", 200
+            return "Binance baglantisi saglanamadi, tekrar deneniyor...", 500
 
         artanlar = sorted([r for r in results if r['streak'] > 0], key=lambda x: x['streak'], reverse=True)[:3]
         dusenler = sorted([r for r in results if r['streak'] < 0], key=lambda x: x['streak'])[:3]
@@ -170,7 +163,7 @@ def send_email_report():
 
         return "Mail basariyla gonderildi!", 200
     except Exception as e:
-        return f"Mail gonderilirken hata olustu: {str(e)}", 200
+        return f"Mail gonderilirken hata olustu: {str(e)}", 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
