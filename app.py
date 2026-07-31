@@ -72,9 +72,6 @@ def fetch_candles_and_count():
         return []
 
 @app.route('/')
-def index():
-    return "Binance 4H Aralıksız Mum Sayıcı Servisi Çalışıyor."
-
 @app.route('/mail-tetikle')
 def send_email_report():
     try:
