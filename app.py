@@ -2,57 +2,57 @@ import os
 import requests
 import smtplib
 import ssl
+from flask import Flask
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 MAIL_ADRESI = "cebrailseylan27@gmail.com"
 UYGULAMA_SIFRESI = "mcpiytlnzvexesba"
 
-app = Flask(__name__) if 'Flask' in globals() else None
-from flask import Flask
 app = Flask(__name__)
 
+# Cloudflare engelini aşmak için alternatif Binance kamuya açık veri aynaları (Mirrors)
+BINANCE_ENDPOINTS = [
+    "https://data-api.binance.vision/api/v3",
+    "https://api1.binance.com/api/v3",
+    "https://api2.binance.com/api/v3",
+    "https://api3.binance.com/api/v3",
+    "https://api.binance.com/api/v3"
+]
+
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 }
+
+def safe_request(path, params=None):
+    """Bulut engeline takılmayan çalışan aynayı bulup veriyi çeker."""
+    for base in BINANCE_ENDPOINTS:
+        try:
+            url = f"{base}{path}"
+            res = requests.get(url, params=params, headers=HEADERS, timeout=4)
+            if res.status_code == 200:
+                return res.json()
+        except:
+            continue
+    return None
 
 def analyze_candles():
     try:
-        # Binance Futures 24 saatlik verileri alıyoruz
-        url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-        res = requests.get(url, headers=HEADERS, timeout=10)
-        
-        # Eğer fapi engellendiyse Spot alternatifine geç
-        if res.status_code != 200:
-            url = "https://api.binance.com/api/v3/ticker/24hr"
-            res = requests.get(url, headers=HEADERS, timeout=10)
-            
-        if res.status_code != 200:
+        data = safe_request("/ticker/24hr")
+        if not data:
             return []
 
-        data = res.json()
-        usdt_pairs = [d for d in data if d.get('symbol', '').endswith('USDT') and not d['symbol'].startswith('1000')]
+        # Sadece standart USDT paritelerini filtrele
+        usdt_pairs = [d for d in data if d.get('symbol', '').endswith('USDT') and not d['symbol'].endswith('UPUSDT') and not d['symbol'].endswith('DOWNUSDT')]
         
-        # En çok hareket eden yükselen ve düşenleri seçiyoruz
-        top_gainers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)), reverse=True)[:10]
-        top_losers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)))[:10]
+        top_gainers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)), reverse=True)[:6]
+        top_losers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)))[:6]
         candidates = top_gainers + top_losers
         
         results = []
-        is_futures = "fapi" in url
-
         for item in candidates:
             sym = item['symbol']
-            if is_futures:
-                k_url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym}&interval=4h&limit=25"
-            else:
-                k_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=4h&limit=25"
-                
-            k_res = requests.get(k_url, headers=HEADERS, timeout=5)
-            if k_res.status_code != 200:
-                continue
-                
-            klines = k_res.json()
+            klines = safe_request("/klines", {"symbol": sym, "interval": "4h", "limit": 20})
             if not klines or len(klines) < 2:
                 continue
 
@@ -96,7 +96,7 @@ def send_email_report():
     try:
         results = analyze_candles()
         if not results:
-            return "Binance baglantisi saglanamadi, tekrar deneniyor...", 500
+            return "Binance veri sunucularina erisilemedi, alternatif ayna bekleniyor.", 500
 
         artanlar = sorted([r for r in results if r['streak'] > 0], key=lambda x: x['streak'], reverse=True)[:3]
         dusenler = sorted([r for r in results if r['streak'] < 0], key=lambda x: x['streak'])[:3]
