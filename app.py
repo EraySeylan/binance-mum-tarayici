@@ -12,11 +12,15 @@ UYGULAMA_SIFRESI = "mcpiytlnzvexesba"
 
 app = Flask(__name__)
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+}
+
 def fetch_single_candle(item):
     try:
         sym = item['symbol']
-        klines_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=4h&limit=25"
-        k_res = requests.get(klines_url, timeout=3)
+        klines_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=4h&limit=20"
+        k_res = requests.get(klines_url, headers=HEADERS, timeout=4)
         if k_res.status_code != 200:
             return None
         
@@ -58,20 +62,19 @@ def fetch_single_candle(item):
 def fetch_candles_and_count():
     try:
         url = "https://api.binance.com/api/v3/ticker/24hr"
-        res = requests.get(url, timeout=5)
+        res = requests.get(url, headers=HEADERS, timeout=8)
         if res.status_code != 200:
             return []
 
         data = res.json()
         usdt_pairs = [d for d in data if d['symbol'].endswith('USDT') and not d['symbol'].endswith('UPUSDT') and not d['symbol'].endswith('DOWNUSDT')]
         
-        top_gainers = sorted(usdt_pairs, key=lambda x: float(x['priceChangePercent']), reverse=True)[:10]
-        top_losers = sorted(usdt_pairs, key=lambda x: float(x['priceChangePercent']))[:10]
+        top_gainers = sorted(usdt_pairs, key=lambda x: float(x['priceChangePercent']), reverse=True)[:8]
+        top_losers = sorted(usdt_pairs, key=lambda x: float(x['priceChangePercent']))[:8]
         candidates = top_gainers + top_losers
         
         results = []
-        # İstekleri sırayla atmak yerine eşzamanlı (hızlı) yapıyoruz
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures_results = executor.map(fetch_single_candle, candidates)
             for r in futures_results:
                 if r:
