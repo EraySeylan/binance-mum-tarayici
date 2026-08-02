@@ -17,7 +17,6 @@ HEADERS = {
 
 def fetch_candles_and_count():
     try:
-        # Doğrudan Binance Spot API
         url = "https://api.binance.com/api/v3/ticker/24hr"
         res = requests.get(url, headers=HEADERS, timeout=8)
         if res.status_code != 200:
@@ -26,7 +25,6 @@ def fetch_candles_and_count():
         data = res.json()
         usdt_pairs = [d for d in data if d.get('symbol', '').endswith('USDT') and not d['symbol'].endswith('UPUSDT') and not d['symbol'].endswith('DOWNUSDT')]
         
-        # Zaman aşımına girmemesi için en çok hareket eden 5 yükselen ve 5 düşeni seçiyoruz
         top_gainers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)), reverse=True)[:5]
         top_losers = sorted(usdt_pairs, key=lambda x: float(x.get('priceChangePercent', 0)))[:5]
         candidates = top_gainers + top_losers
@@ -83,7 +81,7 @@ def send_email_report():
     try:
         results = fetch_candles_and_count()
         if not results:
-            return "Veri cekilemedi.", 500
+            return "NO_DATA", 200
 
         artanlar = sorted([r for r in results if r['streak'] > 0], key=lambda x: x['streak'], reverse=True)[:3]
         dusenler = sorted([r for r in results if r['streak'] < 0], key=lambda x: x['streak'])[:3]
@@ -148,9 +146,9 @@ def send_email_report():
             server.login(MAIL_ADRESI, UYGULAMA_SIFRESI)
             server.sendmail(MAIL_ADRESI, MAIL_ADRESI, msg.as_string())
 
-        return "Mail basariyla gonderildi!", 200
+        return "OK", 200
     except Exception as e:
-        return f"Hata: {str(e)}", 500
+        return "ERROR", 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
