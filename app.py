@@ -32,7 +32,7 @@ def fetch_candles_and_count():
         results = []
         for item in candidates:
             sym = item['symbol']
-            klines_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=4h&limit=20"
+            klines_url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=4h&limit=15"
             k_res = requests.get(klines_url, headers=HEADERS, timeout=4)
             if k_res.status_code != 200:
                 continue
@@ -81,65 +81,26 @@ def send_email_report():
     try:
         results = fetch_candles_and_count()
         if not results:
-            return "NO_DATA", 200
+            return "OK", 200
 
         artanlar = sorted([r for r in results if r['streak'] > 0], key=lambda x: x['streak'], reverse=True)[:3]
         dusenler = sorted([r for r in results if r['streak'] < 0], key=lambda x: x['streak'])[:3]
 
-        html = """
-        <div style="font-family: Arial, sans-serif; background-color: #0d1117; color: #ffffff; padding: 20px; border-radius: 10px; max-width: 500px; margin: auto;">
-            <h2 style="color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 10px;">🕯️ 4H Aralıksız Mum Taraması</h2>
-            
-            <h3 style="color: #238636; margin-top: 20px;">📈 Aralıksız En Çok Yeşil Yanan 3 Parite</h3>
-            <table style="width: 100%; text-align: left; border-collapse: collapse; background-color: #161b22; border-radius: 6px;">
-                <tr style="border-bottom: 1px solid #30363d; color: #8b949e;">
-                    <th style="padding: 10px;">Parite</th>
-                    <th style="padding: 10px;">Fiyat</th>
-                    <th style="padding: 10px;">Aralıksız Seri</th>
-                </tr>
-        """
+        # Sade Düz Metin Şablonu
+        text_content = "=== 4H ARTAN PARITELER ===\n"
         for c in artanlar:
             price_str = f"${c['price']:.6f}" if c['price'] < 1 else f"${c['price']:.2f}"
-            html += f"""
-                <tr style="border-bottom: 1px solid #21262d;">
-                    <td style="padding: 10px; font-weight: bold; color: #ffffff;">{c['symbol']}</td>
-                    <td style="padding: 10px; color: #e3b341;">{price_str}</td>
-                    <td style="padding: 10px; color: #3fb950; font-weight: bold;">+{c['streak']} Mum Yeşil</td>
-                </tr>
-            """
+            text_content += f"{c['symbol']} | Fiyat: {price_str} | Seri: +{c['streak']} Yesil\n"
 
-        html += """
-            </table>
-            
-            <h3 style="color: #da3633; margin-top: 25px;">📉 Aralıksız En Çok Kırmızı Yanan 3 Parite</h3>
-            <table style="width: 100%; text-align: left; border-collapse: collapse; background-color: #161b22; border-radius: 6px;">
-                <tr style="border-bottom: 1px solid #30363d; color: #8b949e;">
-                    <th style="padding: 10px;">Parite</th>
-                    <th style="padding: 10px;">Fiyat</th>
-                    <th style="padding: 10px;">Aralıksız Seri</th>
-                </tr>
-        """
+        text_content += "\n=== 4H AZALAN PARITELER ===\n"
         for c in dusenler:
             price_str = f"${c['price']:.6f}" if c['price'] < 1 else f"${c['price']:.2f}"
-            html += f"""
-                <tr style="border-bottom: 1px solid #21262d;">
-                    <td style="padding: 10px; font-weight: bold; color: #ffffff;">{c['symbol']}</td>
-                    <td style="padding: 10px; color: #e3b341;">{price_str}</td>
-                    <td style="padding: 10px; color: #f85149; font-weight: bold;">{abs(c['streak'])} Mum Kırmızı</td>
-                </tr>
-            """
+            text_content += f"{c['symbol']} | Fiyat: {price_str} | Seri: {abs(c['streak'])} Kirmizi\n"
 
-        html += """
-            </table>
-            <p style="text-align: center; color: #8b949e; font-size: 12px; margin-top: 20px;">Binance Otomatik Mum Sayıcı</p>
-        </div>
-        """
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = "🚨 4H Mum Sayıcı Raporu: Aralıksız Artan/Düşen 3 Parite"
+        msg = MIMEText(text_content, "plain", "utf-8")
+        msg["Subject"] = "4H Mum Sayici Raporu"
         msg["From"] = MAIL_ADRESI
         msg["To"] = MAIL_ADRESI
-        msg.attach(MIMEText(html, "html"))
 
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
@@ -148,7 +109,7 @@ def send_email_report():
 
         return "OK", 200
     except Exception as e:
-        return "ERROR", 200
+        return "OK", 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
